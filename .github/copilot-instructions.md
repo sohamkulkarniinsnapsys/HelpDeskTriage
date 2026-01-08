@@ -14,11 +14,35 @@ This Laravel 12 application provides helpdesk ticketing/triage functionality. Be
 
 ### Directory Structure
 - `app/` - Application logic (Models, Controllers, Providers)
+  - `app/Enums/` - PHP enums (Role, TicketStatus, TicketCategory)
+  - `app/Policies/` - Authorization policies (TicketPolicy, AttachmentPolicy)
+  - `app/Http/Middleware/` - Custom middleware (EnsureUserIsAgent, EnsureUserIsEmployee)
 - `routes/` - Route definitions (`web.php`, `console.php`)
 - `resources/` - Frontend assets (CSS, JS) and Blade templates
 - `config/` - Configuration files (database, app settings, etc.)
 - `database/` - Migrations, seeders, and model factories
 - `tests/` - Unit and Feature tests (using Pest)
+
+### Domain Model
+**Roles**: Employee (creates tickets) and Agent (manages all tickets)
+**Core Entities**:
+- `User`: Has role (employee/agent), creates tickets, can be assigned tickets
+- `Ticket`: Subject, description, category, severity (1-5), status, creator, assignee
+- `Attachment`: Belongs to ticket, stores file metadata
+
+### Authorization System
+**CRITICAL**: All data access MUST be authorized. See `AUTHORIZATION.md` for complete details.
+- **Policies**: `TicketPolicy` and `AttachmentPolicy` define role-based rules
+- **Middleware**: `agent` and `employee` middleware for route protection
+- **Gates**: `act-as-agent`, `act-as-employee` for role checks
+- **Scopes**: `Ticket::visibleTo($user)` filters tickets by role (agents see all, employees see only theirs)
+
+**Key Rules**:
+- Employees can only view/manage tickets they created
+- Agents can view/manage all tickets
+- Only agents can assign tickets or change status
+- Always use `Gate::authorize()` in controllers
+- Always use `visibleTo()` scope for ticket queries
 
 ### Service Container & Dependency Injection
 All services are registered through `AppServiceProvider` in `app/Providers/AppServiceProvider.php`. Use the container for dependency management rather than direct instantiation.
@@ -40,6 +64,9 @@ composer run setup  # One-time initialization
 composer run dev  # Runs concurrent: Laravel server, queue listener, Vite dev server
 ```
 Uses `concurrently` to manage three processes. Watch terminal for build issues.
+- **Server**: Runs on default Laravel port (typically `http://127.0.0.1:8000`)
+- **Queue**: Processes jobs with `--tries=1` flag
+- **Vite**: Hot module replacement for frontend assets
 
 ### Testing
 ```bash
@@ -74,16 +101,21 @@ php artisan queue:listen     # Process queued jobs
 - Extend layouts and use components for reusable UI
 
 ### Testing
-- Feature tests test full workflows (routes, database, etc.)
-- Unit tests test isolated logic (helpers, services)
-- Use Pest's fluent syntax: `test('name')->tap()->expects()`
-- Test database is in-memory SQLite (see `phpunit.xml`)
+- **Feature tests**: Test full workflows (routes, database, etc.) in `tests/Feature/`
+- **Unit tests**: Test isolated logic (helpers, services) in `tests/Unit/`
+- **Pest syntax**: Use fluent assertions - `test('name')->tap()->expects()`
+- **Database**: In-memory SQLite (`:memory:`) configured in `phpunit.xml`
+- **RefreshDatabase**: Commented out by default in `tests/Pest.php` - uncomment when using database in tests
+- **Example**: See `tests/Feature/ExampleTest.php` for basic HTTP test pattern
 
 ### Frontend
-- CSS: `resources/css/app.css` (Tailwind 4.0)
-- JS: `resources/js/app.js` (ES modules)
-- Vite asset compilation: `npm run dev` (development), `npm run build` (production)
-- Vite reloads views automatically via `refresh: true` in `vite.config.js`
+- **CSS**: `resources/css/app.css` (Tailwind 4.0)
+  - Uses new `@source` directive to scan Blade templates and framework views
+  - Custom theme variables defined with `@theme` block
+- **JS**: `resources/js/app.js` (ES modules, imports `bootstrap.js` for Axios setup)
+- **Vite**: Asset compilation via `npm run dev` (development), `npm run build` (production)
+  - Auto-reloads views on change via `refresh: true` in `vite.config.js`
+  - Ignores `storage/framework/views/**` to prevent watch loops
 
 ## Critical Files Reference
 
