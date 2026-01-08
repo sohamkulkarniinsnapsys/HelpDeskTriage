@@ -24,7 +24,8 @@ class TicketFactory extends Factory
             'description' => fake()->paragraphs(3, true),
             'category' => fake()->randomElement(TicketCategory::cases()),
             'severity' => fake()->numberBetween(1, 5),
-            'status' => fake()->randomElement(TicketStatus::cases()),
+            // Default to open to avoid random closed/resolved tickets breaking similarity tests
+            'status' => TicketStatus::Open,
             'created_by' => User::factory(),
             'assigned_to' => fake()->boolean(50) ? User::factory() : null,
         ];

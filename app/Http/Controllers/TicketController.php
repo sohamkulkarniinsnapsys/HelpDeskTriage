@@ -3,35 +3,53 @@
 namespace App\Http\Controllers;
 
 use App\Enums\TicketStatus;
+use App\Http\Requests\AssignTicketRequest;
+use App\Http\Requests\StoreTicketRequest;
+use App\Http\Requests\UpdateTicketRequest;
+use App\Http\Requests\UpdateTicketStatusRequest;
 use App\Models\Ticket;
-use App\Models\User;
+use App\Services\AttachmentService;
+use App\Services\TicketService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Resources\Json\JsonResource;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Gate;
 
 class TicketController extends Controller
 {
+    public function __construct(
+        protected TicketService $ticketService,
+        protected AttachmentService $attachmentService
+    ) {}
+
     /**
-     * Display a listing of tickets.
-     * Agents see all tickets. Employees see only their own.
+     * Display a listing of tickets visible to the authenticated user.
+     * Supports filtering by status, category, search, and unassigned.
      */
-    public function index(Request $request)
+    public function index(Request $request): LengthAwarePaginator
     {
         Gate::authorize('viewAny', Ticket::class);
 
-        $tickets = Ticket::query()
-            ->visibleTo($request->user())
-            ->with(['creator', 'assignee'])
-            ->recent()
-            ->get();
+        $severity = $request->input('severity');
 
-        return response()->json($tickets);
+        $tickets = $this->ticketService->getTickets(
+            user: $request->user(),
+            status: $request->input('status'),
+            category: $request->input('category'),
+            severity: $severity ? (int) $severity : null,
+            search: $request->input('search'),
+            unassigned: $request->boolean('unassigned'),
+            perPage: $request->input('per_page', 15)
+        );
+
+        return $tickets;
     }
 
     /**
-     * Display the specified ticket.
-     * Authorization enforced - employees can only view their own tickets.
+     * Display the specified ticket with all relationships.
      */
-    public function show(Ticket $ticket)
+    public function show(Ticket $ticket): JsonResponse
     {
         Gate::authorize('view', $ticket);
 
@@ -42,100 +60,108 @@ class TicketController extends Controller
 
     /**
      * Store a newly created ticket.
-     * Both employees and agents can create tickets.
      */
-    public function store(Request $request)
+    public function store(StoreTicketRequest $request)
     {
-        Gate::authorize('create', Ticket::class);
+        $validated = $request->validated();
+        
+        $ticket = $this->ticketService->createTicket(
+            $request->user(),
+            $request->safe()->except('attachments')
+        );
 
-        $validated = $request->validate([
-            'subject' => 'required|string|max:255',
-            'description' => 'required|string',
-            'category' => 'required|string|in:access,hardware,network,bug,other',
-            'severity' => 'required|integer|between:1,5',
-        ]);
+        // Handle attachments if provided
+        if ($request->hasFile('attachments')) {
+            $this->attachmentService->uploadAttachments(
+                $ticket,
+                $request->file('attachments')
+            );
+        }
 
-        $ticket = Ticket::create([
-            ...$validated,
-            'status' => TicketStatus::Open,
-            'created_by' => $request->user()->id,
-        ]);
+        $ticket->load(['creator', 'attachments']);
 
-        return response()->json($ticket, 201);
+        if ($request->wantsJson()) {
+            return response()->json($ticket, 201);
+        }
+
+        return redirect()
+            ->route('tickets.view', $ticket)
+            ->with('status', 'Ticket created');
     }
 
     /**
      * Update the specified ticket.
-     * Only agents can update tickets.
      */
-    public function update(Request $request, Ticket $ticket)
+    public function update(UpdateTicketRequest $request, Ticket $ticket): JsonResponse
     {
-        Gate::authorize('update', $ticket);
+        $ticket = $this->ticketService->updateTicket(
+            $ticket,
+            $request->validated()
+        );
 
-        $validated = $request->validate([
-            'subject' => 'sometimes|string|max:255',
-            'description' => 'sometimes|string',
-            'category' => 'sometimes|string|in:access,hardware,network,bug,other',
-            'severity' => 'sometimes|integer|between:1,5',
-        ]);
-
-        $ticket->update($validated);
+        $ticket->load(['creator', 'assignee', 'attachments']);
 
         return response()->json($ticket);
     }
 
     /**
-     * Assign a ticket to an agent.
-     * Only agents can assign tickets.
+     * Assign a ticket to an agent or unassign it.
      */
-    public function assign(Request $request, Ticket $ticket)
+    public function assign(AssignTicketRequest $request, Ticket $ticket)
     {
-        Gate::authorize('assign', $ticket);
+        $ticket = $this->ticketService->assignTicket(
+            $ticket,
+            $request->validated('assigned_to')
+        );
 
-        $validated = $request->validate([
-            'assigned_to' => 'nullable|exists:users,id',
-        ]);
+        $ticket->load(['creator', 'assignee']);
 
-        // Verify the assigned user is an agent
-        if ($validated['assigned_to']) {
-            $assignee = User::findOrFail($validated['assigned_to']);
-            if (!$assignee->role->isAgent()) {
-                abort(422, 'Tickets can only be assigned to agents.');
-            }
+        if ($request->wantsJson()) {
+            return response()->json($ticket);
         }
 
-        $ticket->update([
-            'assigned_to' => $validated['assigned_to'],
-            'status' => $validated['assigned_to'] ? TicketStatus::InProgress : TicketStatus::Open,
-        ]);
-
-        return response()->json($ticket);
+        return redirect()
+            ->route('tickets.view', $ticket)
+            ->with('status', 'Assignment updated');
     }
 
     /**
      * Update the status of a ticket.
-     * Only agents can change ticket status.
      */
-    public function updateStatus(Request $request, Ticket $ticket)
+    public function updateStatus(UpdateTicketStatusRequest $request, Ticket $ticket)
     {
-        Gate::authorize('updateStatus', $ticket);
+        $ticket = $this->ticketService->updateStatus(
+            $ticket,
+            TicketStatus::from($request->validated('status'))
+        );
 
-        $validated = $request->validate([
-            'status' => 'required|string|in:open,in_progress,resolved,closed',
-        ]);
+        $ticket->load(['creator', 'assignee']);
 
-        $ticket->update([
-            'status' => $validated['status'],
-        ]);
+        if ($request->wantsJson()) {
+            return response()->json($ticket);
+        }
 
-        return response()->json($ticket);
+        return redirect()
+            ->route('tickets.view', $ticket)
+            ->with('status', 'Status updated');
+    }
+
+    /**
+     * Get ticket statistics for the authenticated user.
+     */
+    public function statistics(Request $request): JsonResponse
+    {
+        Gate::authorize('viewAny', Ticket::class);
+
+        $stats = $this->ticketService->getStatistics($request->user());
+
+        return response()->json($stats);
     }
 
     /**
      * Remove the specified ticket.
-     * Only agents can delete tickets.
      */
-    public function destroy(Ticket $ticket)
+    public function destroy(Ticket $ticket): JsonResponse
     {
         Gate::authorize('delete', $ticket);
 
