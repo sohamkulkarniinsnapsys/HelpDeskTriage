@@ -159,11 +159,34 @@ class TicketSimilarityEngine
         // Stage 4: Build features for each candidate and score
         $scored = $candidates->map(function (Ticket $ticket) use ($draftFeatures) {
             $candidateFeatures = $this->buildFeatures($ticket->subject, $ticket->description);
-            $score = $this->scoreCandidate($draftFeatures, $candidateFeatures);
+
+            // Compute similarities and common tokens
+            $subjectSimilarity = $this->computeTokenOverlap(
+                $draftFeatures['subject_tokens'],
+                $candidateFeatures['subject_tokens']
+            );
+            $descriptionSimilarity = $this->computeTokenOverlap(
+                $draftFeatures['description_tokens'],
+                $candidateFeatures['description_tokens']
+            );
+
+            $subjectCommon = array_values(array_intersect($draftFeatures['subject_tokens'], $candidateFeatures['subject_tokens']));
+            $descriptionCommon = array_values(array_intersect($draftFeatures['description_tokens'], $candidateFeatures['description_tokens']));
+
+            // Final weighted score
+            $score = (
+                ($subjectSimilarity * self::WEIGHT_SUBJECT) +
+                ($descriptionSimilarity * self::WEIGHT_DESCRIPTION)
+            );
+            $score = max(0.0, min(1.0, $score));
 
             return [
                 'ticket' => $ticket,
                 'score' => $score,
+                'subject_similarity' => $subjectSimilarity,
+                'description_similarity' => $descriptionSimilarity,
+                'subject_common_tokens' => $subjectCommon,
+                'description_common_tokens' => $descriptionCommon,
             ];
         })->toBase(); // Convert to base Collection
 
@@ -488,6 +511,13 @@ class TicketSimilarityEngine
                 'status' => $ticket->status->value,
                 'created_at' => $ticket->created_at,
                 'relevance_score' => round($score, 2),
+                // Enhanced explainability
+                'subject_score' => isset($item['subject_similarity']) ? round($item['subject_similarity'], 2) : null,
+                'description_score' => isset($item['description_similarity']) ? round($item['description_similarity'], 2) : null,
+                'matched_tokens' => [
+                    'subject' => $item['subject_common_tokens'] ?? [],
+                    'description' => $item['description_common_tokens'] ?? [],
+                ],
             ];
         })->toArray();
     }

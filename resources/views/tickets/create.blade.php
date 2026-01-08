@@ -88,7 +88,7 @@
                 </div>
 
                 <div class="p-6" x-show="!loading && suggestions.length === 0">
-                    <p class="text-sm text-gray-500">No similar tickets yet. Start typing a subject or description.</p>
+                    <p class="text-sm text-gray-500">No similar tickets yet. Start typing (min 3-char subject and 10-char description).</p>
                 </div>
 
                 <div class="p-6 space-y-4" x-show="suggestions.length > 0">
@@ -104,6 +104,28 @@
                                 <span x-text="new Date(ticket.created_at).toLocaleDateString()"></span>
                             </div>
                             <p class="text-sm text-gray-700 mt-2" x-text="ticket.description_snippet"></p>
+
+                            <div class="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+                                <div class="text-xs text-gray-600">
+                                    <div>Subject score: <span class="font-semibold" x-text="(ticket.subject_score ?? 0).toFixed(2)"></span></div>
+                                    <div class="mt-1 flex flex-wrap gap-1" x-show="(ticket.matched_tokens?.subject?.length || 0) > 0">
+                                        <template x-for="t in ticket.matched_tokens.subject" :key="t">
+                                            <span class="px-2 py-1 rounded-full bg-blue-100 text-blue-700" x-text="t"></span>
+                                        </template>
+                                    </div>
+                                </div>
+                                <div class="text-xs text-gray-600">
+                                    <div>Description score: <span class="font-semibold" x-text="(ticket.description_score ?? 0).toFixed(2)"></span></div>
+                                    <div class="mt-1 flex flex-wrap gap-1" x-show="(ticket.matched_tokens?.description?.length || 0) > 0">
+                                        <template x-for="t in ticket.matched_tokens.description" :key="t">
+                                            <span class="px-2 py-1 rounded-full bg-amber-100 text-amber-700" x-text="t"></span>
+                                        </template>
+                                    </div>
+                                </div>
+                                <div class="text-right">
+                                    <a :href="'/tickets/' + ticket.id + '/detail'" class="text-xs text-indigo-600 hover:text-indigo-500">View ticket</a>
+                                </div>
+                            </div>
                         </div>
                     </template>
                 </div>
@@ -125,15 +147,31 @@
                 suggestions: [],
                 error: null,
                 debounceTimer: null,
+                minSubject: 3,
+                minDescription: 10,
+                get isValid() {
+                    return (this.subject?.length || 0) >= this.minSubject && (this.description?.length || 0) >= this.minDescription;
+                },
                 debouncedCheck() {
                     clearTimeout(this.debounceTimer);
-                    this.debounceTimer = setTimeout(() => this.checkSimilar(), 400);
+                    this.debounceTimer = setTimeout(() => {
+                        if (this.isValid) {
+                            this.checkSimilar();
+                        } else {
+                            this.suggestions = [];
+                            this.error = null;
+                        }
+                    }, 400);
                 },
                 manualCheck() {
+                    if (!this.isValid) {
+                        this.error = `Please provide at least ${this.minSubject} characters in the subject and ${this.minDescription} in the description.`;
+                        return;
+                    }
                     this.checkSimilar(true);
                 },
                 async checkSimilar(force = false) {
-                    if (!force && !this.subject && !this.description) {
+                    if (!force && !this.isValid) {
                         this.suggestions = [];
                         this.error = null;
                         return;
@@ -158,6 +196,13 @@
                         });
 
                         if (!response.ok) {
+                            if (response.status === 422) {
+                                const data = await response.json().catch(() => null);
+                                const msgs = data?.errors ? Object.values(data.errors).flat() : ['Validation failed'];
+                                this.error = msgs.join(' ');
+                                this.suggestions = [];
+                                return;
+                            }
                             throw new Error('Similarity check failed');
                         }
 

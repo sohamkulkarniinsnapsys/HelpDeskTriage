@@ -107,6 +107,95 @@
                         </form>
                     </div>
                 </div>
+
+                <div class="bg-white shadow-sm sm:rounded-lg" x-data="similarForTicket()">
+                    <div class="p-6 border-b border-gray-100 flex items-center justify-between">
+                        <h3 class="text-lg font-semibold text-gray-900">Similar Active Tickets</h3>
+                        <button type="button" @click="checkSimilar()" class="text-sm text-indigo-600 hover:text-indigo-500">Find similar</button>
+                    </div>
+                    <div class="p-6" x-show="loading">
+                        <p class="text-sm text-gray-600">Checking for similar tickets…</p>
+                    </div>
+                    <div class="p-6" x-show="!loading && suggestions.length === 0">
+                        <p class="text-sm text-gray-500">No similar tickets found.</p>
+                    </div>
+                    <div class="p-6 space-y-4" x-show="suggestions.length > 0">
+                        <template x-for="s in suggestions" :key="s.id">
+                            <div class="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                                <div class="flex items-center justify-between">
+                                    <div class="font-semibold text-gray-900" x-text="s.subject"></div>
+                                    <div class="text-xs text-gray-600">Relevance: <span class="font-semibold" x-text="(s.relevance_score ?? 0).toFixed(2)"></span></div>
+                                </div>
+                                <div class="flex items-center gap-3 text-sm text-gray-600 mt-1">
+                                    <span class="px-2 py-1 rounded-full bg-indigo-100 text-indigo-700" x-text="s.category"></span>
+                                    <span class="px-2 py-1 rounded-full bg-gray-200 text-gray-700" x-text="s.status"></span>
+                                    <span x-text="new Date(s.created_at).toLocaleDateString()"></span>
+                                </div>
+                                <p class="text-sm text-gray-700 mt-2" x-text="s.description_snippet"></p>
+                                <div class="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
+                                    <div class="text-xs text-gray-600">
+                                        <div>Subject score: <span class="font-semibold" x-text="(s.subject_score ?? 0).toFixed(2)"></span></div>
+                                        <div class="mt-1 flex flex-wrap gap-1" x-show="(s.matched_tokens?.subject?.length || 0) > 0">
+                                            <template x-for="t in s.matched_tokens.subject" :key="t">
+                                                <span class="px-2 py-1 rounded-full bg-blue-100 text-blue-700" x-text="t"></span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                    <div class="text-xs text-gray-600">
+                                        <div>Description score: <span class="font-semibold" x-text="(s.description_score ?? 0).toFixed(2)"></span></div>
+                                        <div class="mt-1 flex flex-wrap gap-1" x-show="(s.matched_tokens?.description?.length || 0) > 0">
+                                            <template x-for="t in s.matched_tokens.description" :key="t">
+                                                <span class="px-2 py-1 rounded-full bg-amber-100 text-amber-700" x-text="t"></span>
+                                            </template>
+                                        </div>
+                                    </div>
+                                    <div class="text-right">
+                                        <a :href="'/tickets/' + s.id + '/detail'" class="text-xs text-indigo-600 hover:text-indigo-500">View ticket</a>
+                                    </div>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                    <div class="p-6" x-show="error">
+                        <p class="text-sm text-red-600" x-text="error"></p>
+                    </div>
+                </div>
+                <script>
+                    function similarForTicket() {
+                        return {
+                            loading: false,
+                            suggestions: [],
+                            error: null,
+                            async checkSimilar() {
+                                this.loading = true;
+                                this.error = null;
+                                try {
+                                    const response = await fetch('{{ route('tickets.similar') }}', {
+                                        method: 'POST',
+                                        headers: {
+                                            'Content-Type': 'application/json',
+                                            'Accept': 'application/json',
+                                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content'),
+                                        },
+                                        body: JSON.stringify({
+                                            subject: '{{ addslashes($ticket->subject) }}',
+                                            description: {!! json_encode($ticket->description) !!},
+                                            category: '{{ $ticket->category->value }}',
+                                        }),
+                                    });
+                                    if (!response.ok) {
+                                        throw new Error('Similarity check failed');
+                                    }
+                                    this.suggestions = await response.json();
+                                } catch (e) {
+                                    this.error = 'Unable to fetch similar tickets right now.';
+                                } finally {
+                                    this.loading = false;
+                                }
+                            }
+                        }
+                    }
+                </script>
             @endif
         </div>
     </div>
